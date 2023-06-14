@@ -27,6 +27,7 @@ magics = {
 
 good_recovered_files = []
 recoverable = {}
+selected_files = {}
 
 '''path to analyzeMFT module'''
 analyzeMFT_path = "./analyzeMFT/analyzeMFT.py"
@@ -199,7 +200,7 @@ def search_deleted_files(image):
 #                print("Program stopped!")
 #                sys.exit()
 
-def go_through_disk(disk_path):
+def go_through_disk(disk_path, selected_files):
     total = None
     for disk in psutil.disk_partitions():
         if disk_path in disk.device or disk_path in disk.mountpoint:
@@ -209,7 +210,7 @@ def go_through_disk(disk_path):
         sys.exit()
     if not os.path.exists(".\\Recovered"):
             os.makedirs(".\\\Recovered")
-    for key, value in recoverable.items():
+    for key, value in selected_files.items():
         with open(rf"\\.\\{disk_path}", "rb") as d:
             bytes = d.read(value["offset"] + value["file_size"])
             with open(f".\\Recovered\\{key}", "wb") as f:
@@ -294,10 +295,26 @@ def select_options(stdscr):
 
     if len(selected_options) > 0:
         # Print the selected options after the loop
-        print("Selected options:")
+        print("Recovered files:")
         for option_idx in selected_options:
             option_name = list(recoverable.keys())[option_idx]
             print(option_name)
+        remove = []
+        for i in range(len(recoverable)):
+            if i not in selected_options:
+                remove.append(i)
+        items = list(recoverable.items())
+        filtered_items = [item for i, item in enumerate(items, start=0) if i not in remove]
+        selected_files = dict(filtered_items)
+        go_through_disk("D:", selected_files)
+
+    #print("Do you want to do a deep search though the whole disk?[Y/N]")
+    #key = input()
+    #if key == "Y":
+    #    stdscr.clear()
+    #    while True:
+    #        # Clear the screen
+    #        stdscr.clear()
 
 
 def parse_arguments():
@@ -334,7 +351,6 @@ if __name__ == "__main__":
     search_deleted_files(r"\\.\\d:")
     get_file_attributes(r"\\.\\d:")
     curses.wrapper(select_options)
-    #go_through_disk("D:")
     sys.exit(0)
     arg = parse_arguments()
     if arg.disk:
@@ -343,4 +359,4 @@ if __name__ == "__main__":
         else:
             #search_deleted_files(arg.disk)
             go_through_disk(arg.disk)
-            # imput disk like this (r"\\.\\D:")
+            # imput disk like this (r"D:")
