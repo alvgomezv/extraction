@@ -28,6 +28,7 @@ magics = {
 good_recovered_files = []
 recoverable = {}
 selected_files = {}
+disk = 0
 
 '''path to analyzeMFT module'''
 analyzeMFT_path = "./analyzeMFT/analyzeMFT.py"
@@ -36,12 +37,37 @@ analyzeMFT_path = "./analyzeMFT/analyzeMFT.py"
 mft_file_path = "./analyzeMFT/mft_tmp"
 
 '''path to MFT parsed file'''
-mft_parse_file_path = "./analyzeMFT/mft_tmp.txt"
-#mft_parse_file_path_csv = "./analyzeMFT/mft2.csv"
-#mft_parse_file_path_tl = "./analyzeMFT/mft2.tl.txt"
+mft_parse_file_path = "./analyzeMFT/mft_tmp.csv"
 
-'''path to image file'''
-#image_path = "./analyzeMFT/image2.dd"
+
+def create_image_from_disk(disk_path, image_path):
+    disk = rf"\\.\\{disk_path}"
+    img_info = pytsk3.Img_Info(disk)
+    # Open the output file in write-binary mode
+    with open(image_path, "wb") as output_file:
+        # Read and write the contents of the disk to the output file
+        offset = 0
+        chunk_size = 1024 * 1024  # 1MB chunk size (adjust as needed)
+        while offset < img_info.get_size():
+            data = img_info.read(offset, chunk_size)
+            output_file.write(data)
+            offset += chunk_size
+    print(f"Image {image_path} created successfully")
+
+def print_directory_table(directory):
+    table = [["Name", "Type", "Size", "Create Date", "Modify Date"]]
+    for f in directory:
+        name = f.info.name.name
+        if f.info.meta.type == pytsk3.TSK_FS_META_TYPE_DIR:
+            f_type = "DIR"
+        else:
+            f_type = "FILE"
+        size = f.info.meta.size
+        create = f.info.meta.crtime
+        modify = f.info.meta.mtime
+        table.append([name, f_type, size, create, modify])
+    print(tabulate(table, headers="firstrow"))
+
 
 def ft_read_disk(disk):
     '''Read disk'''
@@ -82,52 +108,17 @@ def ft_check_MFT(mft_parse_file_path):
         good_value = row['Good']
         record_type = row['Record type']
         filename = row['Filename']
-        modif_date = row['Std Info Modification date']
+        modif_date = row['Std Info Access date']
         filename1 = row['Filename #1']
         active_value = row['Active']
         if good_value == 'Good' and record_type == 'File' and active_value == "Inactive":
             if "Zone.Identifier" not in filename1:
-                good_recovered_files.append(filename1)
+                good_recovered_files.append([filename1, modif_date])
             # record_number = row['Record Number']
             sequence_number = row['Sequence Number']
             parent_file_rec = row['Parent File Rec. #']
             # Haz algo con los valores de cada línea, por ejemplo, imprimirlos
             #print(f"Good: {good_value}, Active: {active_value}, filename1: {filename1}, filename: {filename}, modif_date: {modif_date}, Record type: {record_type}, Sequence Number: {sequence_number}, Parent File Rec. #: {parent_file_rec}")
-
-#Open the usb as raw bytes
-#with open(r"\\.\\D:", "rb") as f:
-#    image = f.read(512)
-
-def create_image_from_disk(folder_path, image_path):
-    #drive_type = ctypes.windll.kernel32.GetDriveTypeW(folder_path)
-    #if drive_type == 3 or drive_type == 2:  # 3 fixed disk drive / 2 removable storage device
-    #   print("Path is a disk")
-    img_info = pytsk3.Img_Info(folder_path)
-    # Open the output file in write-binary mode
-    with open(image_path, "wb") as output_file:
-        # Read and write the contents of the disk to the output file
-        offset = 0
-        chunk_size = 1024 * 1024  # 1MB chunk size (adjust as needed)
-        while offset < img_info.get_size():
-            data = img_info.read(offset, chunk_size)
-            output_file.write(data)
-            offset += chunk_size
-
-    print(f"Image {image_path} created successfully")
-
-def print_directory_table(directory):
-    table = [["Name", "Type", "Size", "Create Date", "Modify Date"]]
-    for f in directory:
-        name = f.info.name.name
-        if f.info.meta.type == pytsk3.TSK_FS_META_TYPE_DIR:
-            f_type = "DIR"
-        else:
-            f_type = "FILE"
-        size = f.info.meta.size
-        create = f.info.meta.crtime
-        modify = f.info.meta.mtime
-        table.append([name, f_type, size, create, modify])
-    print(tabulate(table, headers="firstrow"))
 
 def ft_extract_MFT(file):
     #for entry in file
@@ -135,72 +126,22 @@ def ft_extract_MFT(file):
     with open(mft_file_path, 'wb') as output:
         output.write(content)
 
-def search_deleted_files(image):
-    img_info = pytsk3.Img_Info(image)
-    fs_info = pytsk3.FS_Info(img_info)
-    #root_dir = fs_info.open_dir(path="/")
-    mft_file = fs_info.open("/$MFT")
+def search_deleted_files(disk_path):
+    disk = rf"\\.\\{disk_path}"
+    try:
+        img_info = pytsk3.Img_Info(disk)
+        fs_info = pytsk3.FS_Info(img_info)
+        #root_dir = fs_info.open_dir(path="/")
+        mft_file = fs_info.open("/$MFT")
+    except:
+        print("Disk not found")
+        sys.exit()
     #print_directory_table(root_dir)
     ft_extract_MFT(mft_file)
     ft_parse_MFT(mft_file_path)
     ft_check_MFT(mft_parse_file_path)
 
-#def go_through_disk(disk_path):
-#    total = None
-#    for disk in psutil.disk_partitions():
-#        if disk_path in disk.device or disk_path in disk.mountpoint:
-#            total = psutil.disk_usage(disk.mountpoint).total
-#    if total is None:
-#        print("Error: Disk not found")
-#        sys.exit()
-#    size = 512
-#    blocks = total/size
-#    count = 0
-#    offset = 0
-#    with tqdm(total=blocks, unit='block') as progress_bar:
-#        try:
-#            d = open(f"\\.\\{disk_path}", "rb")
-#        except:
-#            print("Disk cannot be read, format must be: \\\\.\\\\D:")
-#            sys.exit()
-#        else:
-#            bytes = d.read(size)
-#            progress_bar.update(1)
-#            try:
-#                while bytes:
-#                    for key, value in magics.items():
-#                        # HACER: afinar busqueda por nombre de archivo a recuperar
-#                        found = bytes.find(value[0])
-#                        if found >= 0:
-#                            drec = True
-#                            #print(f"Found {key} at location: {str(hex(found+(size*offset)))}")
-#                            # File name option for the folder
-#                            if not os.path.exists("C:\\Users\\Usuario\\extraction\\Recovered"):
-#                                os.makedirs("C:\\Users\\Usuario\\extraction\\Recovered")     
-#                            with open(f"C:\\Users\\Usuario\\extraction\\Recovered\\{str(count)}.{key}", "wb") as f:
-#                                f.write(bytes[found:])
-#                                while drec is True:
-#                                    bytes = d.read(size)
-#                                    progress_bar.update(1)
-#                                    found = bytes.find(value[1])
-#                                    if found >= 0:
-#                                        f.write(bytes[:found+2])
-#                                        d.seek((offset+1)*size)
-#                                        #print(f"Wrote {key} to location: {str(count)}.{key}\n")
-#                                        drec = False
-#                                        count += 1
-#                                    else:
-#                                        f.write(bytes)
-#                    bytes = d.read(size)
-#                    progress_bar.update(1)
-#                    offset += 1
-#                d.close()
-#            except KeyboardInterrupt:
-#                progress_bar.close()
-#                print("Program stopped!")
-#                sys.exit()
-
-def go_through_disk(disk_path, selected_files):
+def deep_search(disk_path):
     total = None
     for disk in psutil.disk_partitions():
         if disk_path in disk.device or disk_path in disk.mountpoint:
@@ -208,34 +149,94 @@ def go_through_disk(disk_path, selected_files):
     if total is None:
         print("Error: Disk not found")
         sys.exit()
-    if not os.path.exists(".\\Recovered"):
-            os.makedirs(".\\\Recovered")
+    size = 512
+    blocks = total/size
+    count = 0
+    offset = 0
+    with tqdm(total=blocks, unit='block') as progress_bar:
+        try:
+            d = open(f"\\\\.\\\\{disk_path}", "rb")
+        except:
+            print("Disk cannot be read, format must be: \\\\.\\\\D:")
+            sys.exit()
+        else:
+            bytes = d.read(size)
+            progress_bar.update(1)
+            try:
+                while bytes:
+                    for key, value in magics.items():
+                        found = bytes.find(value[0])
+                        if found >= 0:
+                            drec = True
+                            #print(f"Found {key} at location: {str(hex(found+(size*offset)))}")
+                            if not os.path.exists(".\\Recovered_deep"):
+                                os.makedirs(".\\Recovered_deep")     
+                            with open(f".\\Recovered_deep\\{str(count)}.{key}", "wb") as f:
+                                f.write(bytes[found:])
+                                while drec is True:
+                                    bytes = d.read(size)
+                                    found = bytes.find(value[1])
+                                    if found >= 0:
+                                        f.write(bytes[:found+2])
+                                        d.seek((offset+1)*size)
+                                        #print(f"Wrote {key} to location: {str(count)}.{key}\n")
+                                        drec = False
+                                        count += 1
+                                    else:
+                                        f.write(bytes)
+                    bytes = d.read(size)
+                    progress_bar.update(1)
+                    offset += 1
+                d.close()
+                print(f"\nRecovered {count} files in the deep search")
+            except KeyboardInterrupt:
+                progress_bar.close()
+                print("Program stopped!")
+                sys.exit()
+
+def get_from_disk(disk_path, selected_files):
+    total = None
+    for disks in psutil.disk_partitions():
+        if disk_path in disks.device or disk_path in disks.mountpoint:
+            total = psutil.disk_usage(disks.mountpoint).total
+    if total is None:
+        print("Error: Disk not found")
+        sys.exit()
+    if not os.path.exists(".\\Recovered_mft"):
+            os.makedirs(".\\Recovered_mft")
     for key, value in selected_files.items():
         with open(rf"\\.\\{disk_path}", "rb") as d:
             bytes = d.read(value["offset"] + value["file_size"])
-            with open(f".\\Recovered\\{key}", "wb") as f:
+            with open(f".\\Recovered_mft\\{key}", "wb") as f:
                 f.write(bytes[value["offset"]:])
 
 
-def get_file_attributes(disk_path):
-    img_info = pytsk3.Img_Info(disk_path)
+def get_file_attributes(disk_path, timelaps):
+    disk = rf"\\.\\{disk_path}"
+    img_info = pytsk3.Img_Info(disk)
     fs_info = pytsk3.FS_Info(img_info)
     # Iterate through the files to recover from the entries of the MFT
     for file in good_recovered_files:
-        mft_file = fs_info.open(file)
-        # Iterate through the attributes of the entries
-        for attribute in mft_file:
-            if attribute.info.type == pytsk3.TSK_FS_ATTR_TYPE_NTFS_DATA and attribute.info.name != b'Zone.Identifier':
-                # Iterate through the data runs of the $DATA attribute of each entry
-                for run in attribute:
-                    cluster_start = run.addr * fs_info.info.block_size  # Offset in bytes
-                    cluster_length = run.len * fs_info.info.block_size  # Length in bytes
-                    #print(f"Cluster start: {cluster_start}, Cluster length: {cluster_length}")
-                    recoverable[file.lstrip('/')] = {
-                        "offset" : cluster_start, 
-                        "file_size" : attribute.info.size, 
-                        "cluster_size" : cluster_length}
-                    
+        try:
+            unix_date = datetime.datetime.strptime(file[1], "%Y-%m-%d %H:%M:%S.%f").timestamp()
+        except ValueError:
+            unix_date = datetime.datetime.strptime(file[1], "%Y-%m-%d %H:%M:%S").timestamp()
+        if unix_date >= timelaps:
+            mft_file = fs_info.open(file[0])
+            # Iterate through the attributes of the entries
+            for attribute in mft_file:
+                if attribute.info.type == pytsk3.TSK_FS_ATTR_TYPE_NTFS_DATA and attribute.info.name != b'Zone.Identifier':
+                    # Iterate through the data runs of the $DATA attribute of each entry
+                    for run in attribute:
+                        cluster_start = run.addr * fs_info.info.block_size  # Offset in bytes
+                        cluster_length = run.len * fs_info.info.block_size  # Length in bytes
+                        #print(f"Cluster start: {cluster_start}, Cluster length: {cluster_length}")
+                        recoverable[file[0].lstrip('/')] = {
+                            "offset" : cluster_start, 
+                            "file_size" : attribute.info.size, 
+                            "cluster_size" : cluster_length,
+                            "access_date" : file[1]}
+
 def select_options(stdscr):
     # Clear the screen
     stdscr.clear()
@@ -254,12 +255,12 @@ def select_options(stdscr):
         for i, (name, data) in enumerate(recoverable.items()):
             if i == current_option:
                 # Display the current option with a highlight
-                stdscr.addstr(i+1, 0, "> " + f"{name:50s}" + " <" + f" - size: {float(data['file_size']/1024):.2f}KB", curses.A_REVERSE)
+                stdscr.addstr(i+1, 0, "> " + f"{name:35s}" + " <" + f" | size: {float(data['file_size']/1024):.2f}KB".ljust(20) +f"| access date: {data['access_date']}", curses.A_REVERSE)
             elif i in selected_options:
                 # Display a tick after the selected options
-                stdscr.addstr(i+1, 0,"* " + f"{name:50s}" + 2*" "+ f" - size: {float(data['file_size']/1024):.2f}KB")
+                stdscr.addstr(i+1, 0,"* " + f"{name:35s}" + 2*" "+ f" | size: {float(data['file_size']/1024):.2f}KB".ljust(20) + f"| access date: {data['access_date']}")
             else:
-                stdscr.addstr(i+1, 0, f"{name:50s}" + 4*" " + f" - size: {float(data['file_size']/1024):.2f}KB")
+                stdscr.addstr(i+1, 0, f"{name:35s}" + 4*" " + f" | size: {float(data['file_size']/1024):.2f}KB".ljust(20) + f"| access date: {data['access_date']}")
 
         # Display the "Start" option in bold letters without the asterisk
         start_option = "Start"
@@ -306,34 +307,24 @@ def select_options(stdscr):
         items = list(recoverable.items())
         filtered_items = [item for i, item in enumerate(items, start=0) if i not in remove]
         selected_files = dict(filtered_items)
-        go_through_disk("D:", selected_files)
+        get_from_disk(disk, selected_files)
 
-    #print("Do you want to do a deep search though the whole disk?[Y/N]")
-    #key = input()
-    #if key == "Y":
-    #    stdscr.clear()
-    #    while True:
-    #        # Clear the screen
-    #        stdscr.clear()
 
 
 def parse_arguments():
     parser = argparse.ArgumentParser(description="Tool for recovering recently deleted files on NTFS")
-    parser.add_argument("-d", "--disk", action="store", help="Path to the disk")
+    parser.add_argument("disk", help="Path to the disk")
     parser.add_argument("-i", "--image", action="store", help="Create an image from a disk file")
     parser.add_argument("-t", "--timelaps", action="store", help="Time range in hours, default 24h" )
     arg = parser.parse_args()
-    date_format = "%d-%m-%Y"
     if arg.disk is None:
         print("A disk must be provided")
         sys.exit()
     if re.match(r'^[A-Z]:$', arg.disk) is None:
         print("Disk format must be uppercase letter followed by a colon (ex: 'D:')")
         sys.exit()
-    if arg.image and not arg.disk:
-        print("You need to specify a disk to create an image from with the '-i' flag")
-        sys.exit()
     try:
+        date_format = "%d-%m-%Y"
         if arg.timelaps is not None:
             arg.timelaps = datetime.datetime.strptime(arg.timelaps, date_format).timestamp()
         else:
@@ -348,15 +339,23 @@ def parse_arguments():
 if __name__ == "__main__":
     #create_image_from_disk(r"\\.\\d:")
 
-    search_deleted_files(r"\\.\\d:")
-    get_file_attributes(r"\\.\\d:")
-    curses.wrapper(select_options)
-    sys.exit(0)
+    #disk = "D:"
+    #search_deleted_files( r"\\.\\d:")
+    #get_file_attributes( r"\\.\\d:", time.time() - (24 * 60 * 60))
+    #curses.wrapper(select_options)
+    #print("Do you want to do a deep search though the whole disk? [Y/N]")
+    #key = input()
+    #if key in ["y", "Y", "YES", "yes"]:
+    #    deep_search(disk)
+
     arg = parse_arguments()
-    if arg.disk:
-        if arg.image:
-            create_image_from_disk(arg.disk, arg.image)
-        else:
-            #search_deleted_files(arg.disk)
-            go_through_disk(arg.disk)
-            # imput disk like this (r"D:")
+    disk = arg.disk
+    if arg.image:
+        create_image_from_disk(arg.disk, arg.image)
+    search_deleted_files(arg.disk)
+    get_file_attributes(arg.disk, arg.timelaps)
+    curses.wrapper(select_options)
+    print("Do you want to do a deep search though the whole disk? [Y/N]")
+    key = input()
+    if key in ["y", "Y", "YES", "yes"]:
+        deep_search(arg.disk)
