@@ -1,0 +1,3 @@
+[submodule "analyzeMFT"]
+	path = analyzeMFT
+	url = git@github.com:dkovar/analyzeMFT.git

@@ -1,22 +1,18 @@
-
-# https://github.com/dkovar/analyzeMFT
-# "Record Number","Good","Active","Record type","Sequence Number","Parent File Rec. #","Parent File Rec. Seq. #","Filename #1","Std Info Creation date","Std Info Modification date","Std Info Access date","Std Info Entry date","FN Info Creation date","FN Info Modification date","FN Info Access date","FN Info Entry date","Object ID","Birth Volume ID","Birth Object ID","Birth Domain ID","Filename #2","FN Info Creation date","FN Info Modify date","FN Info Access date","FN Info Entry date","Filename #3","FN Info Creation date","FN Info Modify date","FN Info Access date","FN Info Entry date","Filename #4","FN Info Creation date","FN Info Modify date","FN Info Access date","FN Info Entry date","Standard Information","Attribute List","Filename","Object ID","Volume Name","Volume Info","Data","Index Root","Index Allocation","Bitmap","Reparse Point","EA Information","EA","Property Set","Logged Utility Stream","Log/Notes","STF FN Shift","uSec Zero","ADS","Possible Copy","Possible Volume Move"
 import os
 import sys
 import argparse
 import datetime
 import time
-import ctypes
 import pytsk3
 from tabulate import tabulate
 import psutil
 from tqdm import tqdm
-import csv
 import pandas as pd
 import subprocess
 import re
 import curses
 
+'''magic numbers for file types'''
 magics = {
     "jpg" : [b"\xff\xd8\xff\xe0\x00\x10\x4a\x46", b"\xff\xd9"],
     "png" : [b"\x89\x50\x4e\x47\x0d\x0a\x1a\x0a", b"\x49\x45\x4e\x44\xae\x42\x60\x82"],
@@ -28,7 +24,7 @@ magics = {
 good_recovered_files = []
 recoverable = {}
 selected_files = {}
-disk = 0
+disk = ""
 
 '''path to analyzeMFT module'''
 analyzeMFT_path = "./analyzeMFT/analyzeMFT.py"
@@ -40,46 +36,27 @@ mft_file_path = "./analyzeMFT/mft_tmp"
 mft_parse_file_path = "./analyzeMFT/mft_tmp.csv"
 
 
-def create_image_from_disk(disk_path, image_path):
+def ft_create_image_from_disk(disk_path, image_path):
+    '''Create image from disk'''
     disk = rf"\\.\\{disk_path}"
     img_info = pytsk3.Img_Info(disk)
-    # Open the output file in write-binary mode
     with open(image_path, "wb") as output_file:
-        # Read and write the contents of the disk to the output file
         offset = 0
-        chunk_size = 1024 * 1024  # 1MB chunk size (adjust as needed)
+        chunk_size = 1024 * 1024  # 1MB chunk size
         while offset < img_info.get_size():
             data = img_info.read(offset, chunk_size)
             output_file.write(data)
             offset += chunk_size
     print(f"Image {image_path} created successfully")
 
-def print_directory_table(directory):
-    table = [["Name", "Type", "Size", "Create Date", "Modify Date"]]
-    for f in directory:
-        name = f.info.name.name
-        if f.info.meta.type == pytsk3.TSK_FS_META_TYPE_DIR:
-            f_type = "DIR"
-        else:
-            f_type = "FILE"
-        size = f.info.meta.size
-        create = f.info.meta.crtime
-        modify = f.info.meta.mtime
-        table.append([name, f_type, size, create, modify])
-    print(tabulate(table, headers="firstrow"))
-
-
 def ft_read_disk(disk):
     '''Read disk'''
-    # Open the image file and create an image object
     image = pytsk3.Img_Info(disk)
-    # Open the partition table and print the partitions
     try:
         partitionTable = pytsk3.Volume_Info(image)
     except Exception as error:
         print(error)
         exit(1)
-    # Open the file system and retrieve the root directory
     try:
         fileSystemObject = pytsk3.FS_Info(image, offset=partitionTable[0].start*512)
     except Exception as error:
@@ -88,20 +65,12 @@ def ft_read_disk(disk):
     return fileSystemObject
 
 def ft_parse_MFT(mft_file_path):
-    # analyzeMFT_path = "./analyzeMFT-master/analyzeMFT.py"
-    # mft_file_path = "./analyzeMFT-master/mft"
-    # mft_parse_file_path = "./analyzeMFT-master/mft.txt"
-
-    # Comando a ejecutar
+    '''Parse MFT file'''
     command = ["python3", analyzeMFT_path, "-f", mft_file_path,  "-o", mft_parse_file_path]
-    #command = ["python3", analyzeMFT_path, "-f", mft_file_path,  "-c", mft_parse_file_path_csv]
-    #command = ["python3", analyzeMFT_path, "-f", mft_file_path,  "-b", mft_parse_file_path_tl]
-
-    # Ejecutar el comando
     subprocess.run(command)
 
 def ft_check_MFT(mft_parse_file_path):
-    # Leer el archivo parseado
+    ''' Check & read MFT file'''
     df = pd.read_csv(mft_parse_file_path, encoding="latin-1")
 
     for index, row in df.iterrows():
@@ -112,21 +81,20 @@ def ft_check_MFT(mft_parse_file_path):
         filename1 = row['Filename #1']
         active_value = row['Active']
         if good_value == 'Good' and record_type == 'File' and active_value == "Inactive":
+            '''Recoverable files'''
             if "Zone.Identifier" not in filename1:
                 good_recovered_files.append([filename1, modif_date])
-            # record_number = row['Record Number']
-            sequence_number = row['Sequence Number']
-            parent_file_rec = row['Parent File Rec. #']
-            # Haz algo con los valores de cada línea, por ejemplo, imprimirlos
-            #print(f"Good: {good_value}, Active: {active_value}, filename1: {filename1}, filename: {filename}, modif_date: {modif_date}, Record type: {record_type}, Sequence Number: {sequence_number}, Parent File Rec. #: {parent_file_rec}")
+            # sequence_number = row['Sequence Number']
+            # parent_file_rec = row['Parent File Rec. #']
 
 def ft_extract_MFT(file):
-    #for entry in file
+    '''Extract MFT file'''
     content = file.read_random(0, file.info.meta.size)
     with open(mft_file_path, 'wb') as output:
         output.write(content)
 
-def search_deleted_files(disk_path):
+def ft_search_deleted_files(disk_path):
+    '''Search deleted files'''
     disk = rf"\\.\\{disk_path}"
     try:
         img_info = pytsk3.Img_Info(disk)
@@ -136,12 +104,12 @@ def search_deleted_files(disk_path):
     except:
         print("Disk not found")
         sys.exit()
-    #print_directory_table(root_dir)
     ft_extract_MFT(mft_file)
     ft_parse_MFT(mft_file_path)
     ft_check_MFT(mft_parse_file_path)
 
-def deep_search(disk_path):
+def ft_deep_search(disk_path):
+    '''Deep search for deleted files (with magik) in whole disk'''
     total = None
     for disk in psutil.disk_partitions():
         if disk_path in disk.device or disk_path in disk.mountpoint:
@@ -168,7 +136,6 @@ def deep_search(disk_path):
                         found = bytes.find(value[0])
                         if found >= 0:
                             drec = True
-                            #print(f"Found {key} at location: {str(hex(found+(size*offset)))}")
                             if not os.path.exists(".\\Recovered_deep"):
                                 os.makedirs(".\\Recovered_deep")     
                             with open(f".\\Recovered_deep\\{str(count)}.{key}", "wb") as f:
@@ -179,7 +146,6 @@ def deep_search(disk_path):
                                     if found >= 0:
                                         f.write(bytes[:found+2])
                                         d.seek((offset+1)*size)
-                                        #print(f"Wrote {key} to location: {str(count)}.{key}\n")
                                         drec = False
                                         count += 1
                                     else:
@@ -194,7 +160,8 @@ def deep_search(disk_path):
                 print("Program stopped!")
                 sys.exit()
 
-def get_from_disk(disk_path, selected_files):
+def ft_get_from_disk(disk_path, selected_files):
+    '''Get selected files from disk'''
     total = None
     for disks in psutil.disk_partitions():
         if disk_path in disks.device or disk_path in disks.mountpoint:
@@ -211,7 +178,8 @@ def get_from_disk(disk_path, selected_files):
                 f.write(bytes[value["offset"]:])
 
 
-def get_file_attributes(disk_path, timelaps):
+def ft_get_file_attributes(disk_path, timelapse):
+    '''Get file attributes from disk'''
     disk = rf"\\.\\{disk_path}"
     img_info = pytsk3.Img_Info(disk)
     fs_info = pytsk3.FS_Info(img_info)
@@ -221,7 +189,7 @@ def get_file_attributes(disk_path, timelaps):
             unix_date = datetime.datetime.strptime(file[1], "%Y-%m-%d %H:%M:%S.%f").timestamp()
         except ValueError:
             unix_date = datetime.datetime.strptime(file[1], "%Y-%m-%d %H:%M:%S").timestamp()
-        if unix_date >= timelaps:
+        if unix_date >= timelapse:
             mft_file = fs_info.open(file[0])
             # Iterate through the attributes of the entries
             for attribute in mft_file:
@@ -230,72 +198,59 @@ def get_file_attributes(disk_path, timelaps):
                     for run in attribute:
                         cluster_start = run.addr * fs_info.info.block_size  # Offset in bytes
                         cluster_length = run.len * fs_info.info.block_size  # Length in bytes
-                        #print(f"Cluster start: {cluster_start}, Cluster length: {cluster_length}")
                         recoverable[file[0].lstrip('/')] = {
                             "offset" : cluster_start, 
                             "file_size" : attribute.info.size, 
                             "cluster_size" : cluster_length,
                             "access_date" : file[1]}
 
-def select_options(stdscr):
-    # Clear the screen
+def ft_select_options(stdscr):
     stdscr.clear()
 
     selected_options = set()
     current_option = 0
 
     while True:
-        # Clear the screen
         stdscr.clear()
-        # Introductory message
         intro_message = "Select files to recover:"
         stdscr.addstr(0, 0, intro_message, curses.A_BOLD)
 
-        # Display the options
         for i, (name, data) in enumerate(recoverable.items()):
             if i == current_option:
-                # Display the current option with a highlight
                 stdscr.addstr(i+1, 0, "> " + f"{name:35s}" + " <" + f" | size: {float(data['file_size']/1024):.2f}KB".ljust(20) +f"| access date: {data['access_date']}", curses.A_REVERSE)
             elif i in selected_options:
-                # Display a tick after the selected options
                 stdscr.addstr(i+1, 0,"* " + f"{name:35s}" + 2*" "+ f" | size: {float(data['file_size']/1024):.2f}KB".ljust(20) + f"| access date: {data['access_date']}")
             else:
                 stdscr.addstr(i+1, 0, f"{name:35s}" + 4*" " + f" | size: {float(data['file_size']/1024):.2f}KB".ljust(20) + f"| access date: {data['access_date']}")
 
-        # Display the "Start" option in bold letters without the asterisk
         start_option = "Start"
         if current_option == len(recoverable):
             stdscr.addstr(len(recoverable)+1, 0, "> " + start_option + " <", curses.A_REVERSE)
         else:
             stdscr.addstr(len(recoverable)+1, 0, start_option)
 
-        # Refresh the screen
         stdscr.refresh()
 
-        # Wait for user input
         try:
             key = stdscr.getch()
         except KeyboardInterrupt:
             print("Program stopped!")
             sys.exit()
 
-        # Handle arrow key input
         if key == curses.KEY_UP:
             current_option = (current_option - 1) % (len(recoverable) + 1)
         elif key == curses.KEY_DOWN:
             current_option = (current_option + 1) % (len(recoverable) + 1)
         elif key == ord('\n'):  # Handle Enter key press
             if current_option == len(recoverable):
-                break  # Break the loop if "Start" option is selected
+                break  
             else:
-                # Toggle the selection of the current option
                 if current_option in selected_options:
                     selected_options.remove(current_option)
                 else:
                     selected_options.add(current_option)
 
     if len(selected_options) > 0:
-        # Print the selected options after the loop
         print("Recovered files:")
         for option_idx in selected_options:
             option_name = list(recoverable.keys())[option_idx]
@@ -307,15 +262,13 @@ def select_options(stdscr):
         items = list(recoverable.items())
         filtered_items = [item for i, item in enumerate(items, start=0) if i not in remove]
         selected_files = dict(filtered_items)
-        get_from_disk(disk, selected_files)
-
-
+        ft_get_from_disk(disk, selected_files)
 
 def parse_arguments():
     parser = argparse.ArgumentParser(description="Tool for recovering recently deleted files on NTFS")
     parser.add_argument("disk", help="Path to the disk")
     parser.add_argument("-i", "--image", action="store", help="Create an image from a disk file")
-    parser.add_argument("-t", "--timelaps", action="store", help="Time range in hours, default 24h" )
+    parser.add_argument("-t", "--timelapse", action="store", help="Time range in hours, default 24h" )
     arg = parser.parse_args()
     if arg.disk is None:
         print("A disk must be provided")
@@ -325,37 +278,28 @@ def parse_arguments():
         sys.exit()
     try:
         date_format = "%d-%m-%Y"
-        if arg.timelaps is not None:
-            arg.timelaps = datetime.datetime.strptime(arg.timelaps, date_format).timestamp()
+        if arg.timelapse is not None:
+            arg.timelapse = datetime.datetime.strptime(arg.timelapse, date_format).timestamp()
         else:
-            arg.timelaps = time.time() - (24 * 60 * 60)
+            arg.timelapse = time.time() - (24 * 60 * 60)
         return arg
     except Exception as e:
         print(f"Error: {e}")
         sys.exit()
 
-
-
 if __name__ == "__main__":
-    #create_image_from_disk(r"\\.\\d:")
-
-    #disk = "D:"
-    #search_deleted_files( r"\\.\\d:")
-    #get_file_attributes( r"\\.\\d:", time.time() - (24 * 60 * 60))
-    #curses.wrapper(select_options)
-    #print("Do you want to do a deep search though the whole disk? [Y/N]")
-    #key = input()
-    #if key in ["y", "Y", "YES", "yes"]:
-    #    deep_search(disk)
-
     arg = parse_arguments()
     disk = arg.disk
     if arg.image:
-        create_image_from_disk(arg.disk, arg.image)
-    search_deleted_files(arg.disk)
-    get_file_attributes(arg.disk, arg.timelaps)
-    curses.wrapper(select_options)
+        ft_create_image_from_disk(arg.disk, arg.image)
+    ft_search_deleted_files(arg.disk)
+    ft_get_file_attributes(arg.disk, arg.timelapse)
+    curses.wrapper(ft_select_options)
     print("Do you want to do a deep search though the whole disk? [Y/N]")
     key = input()
     if key in ["y", "Y", "YES", "yes"]:
-        deep_search(arg.disk)
+        ft_deep_search(arg.disk)
+
+
+
+
